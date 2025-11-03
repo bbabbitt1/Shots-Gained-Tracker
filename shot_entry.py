@@ -1,104 +1,77 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk, messagebox
 import sqlite3
-
-# --- COLORS ---
-teal_light = "#9ECFD4"
-pale_sage = "#E5E9C5"
-dark_bg = "#0B1220"
-dark_text = "#0B1220"
-green_text = "#017a39"
-red_text = "#b10000"
-
-# --- DATABASE CONFIG ---
-DB_PATH = "shots_gained.db"
-
-# --- IMPORT round_info from setup ---
 from round_setup import round_info
 
-# Global cache for all shots this round
+# --- Azure Dark Palette ---
+BG_PRIMARY   = "#0E1726"
+CARD_BG      = "#1E293B"
+ENTRY_BG     = "#CED8E9"
+TEXT_COLOR   = "#F3F2F1"
+SUBTEXT_COLOR= "#B3B0AD"
+ACCENT       = "#0078D4"
+ACCENT_HOVER = "#005A9E"
+FIELD_BG     = "#2A3448"
+FIELD_BORDER = "#2D3E55"
+GREEN_TEXT   = "#13A10E"
+RED_TEXT     = "#C50F1F"
+
+DB_PATH = "shots_gained.db"
 cached_shots = []
 
 def center_window(win, w, h):
-    sw = win.winfo_screenwidth()
-    sh = win.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    x, y = (sw - w) // 2, (sh - h) // 2
     win.geometry(f"{w}x{h}+{x}+{y}")
 
 def open_shot_entry():
-    """Dynamic shot entry window — with table view, memory, and 'Hole' handling."""
+    """Shot entry window, Azure dark with grid layout and cached data only."""
     hole_num = 1
     shots_this_hole = []
-    last_surface = None
-    last_distance = None
+    last_surface, last_distance = None, None
 
+    # --- FUNCTIONS ---
     def calculate_strokes_gained():
-        """Auto-calculates strokes gained using DimAvg, including 'Hole' handling."""
+        """Compute SG live (no DB write)."""
         try:
-            surface_start = surface_start_dd.get()
-            surface_end = surface_end_dd.get()
+            surf_start = surface_start_dd.get()
+            surf_end = surface_end_dd.get()
+            if not surf_start or not surf_end:
+                return
             dist_start = float(distance_start_entry.get())
         except ValueError:
-            sg_label.config(text="Strokes Gained: --", fg=dark_text)
+            sg_label.config(text="Strokes Gained: --", fg=TEXT_COLOR)
             return
-
-        if not surface_start or not surface_end:
-            return
-
         try:
             conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-
-            # Get starting expected strokes
-            cursor.execute("""
-                SELECT TourAvg FROM DimAvg
-                WHERE Surface = ? AND Distance = ?
-            """, (surface_start, int(dist_start)))
-            start_avg = cursor.fetchone()
-            if not start_avg:
-                sg_label.config(text="Start Avg Missing", fg=red_text)
-                conn.close()
+            c = conn.cursor()
+            c.execute("SELECT TourAvg FROM DimAvg WHERE Surface=? AND Distance=?", (surf_start, int(dist_start)))
+            start_row = c.fetchone()
+            if not start_row:
+                sg_label.config(text="Start Avg Missing", fg=RED_TEXT)
                 return
-
-            # Determine ending expected strokes
-            if surface_end == "Hole":
-                end_avg_val = 0.0
+            if surf_end == "Hole":
+                end_val = 0
             else:
-                try:
-                    dist_end = float(distance_end_entry.get())
-                except ValueError:
-                    sg_label.config(text="End distance required", fg=red_text)
-                    conn.close()
+                dist_end = float(distance_end_entry.get())
+                c.execute("SELECT TourAvg FROM DimAvg WHERE Surface=? AND Distance=?", (surf_end, int(dist_end)))
+                end_row = c.fetchone()
+                if not end_row:
+                    sg_label.config(text="End Avg Missing", fg=RED_TEXT)
                     return
-
-                cursor.execute("""
-                    SELECT TourAvg FROM DimAvg
-                    WHERE Surface = ? AND Distance = ?
-                """, (surface_end, int(dist_end)))
-                end_avg = cursor.fetchone()
-                if not end_avg:
-                    sg_label.config(text="End Avg Missing", fg=red_text)
-                    conn.close()
-                    return
-                end_avg_val = end_avg[0]
-
+                end_val = end_row[0]
+            sg_val = start_row[0] - (1 + end_val)
+            if penalty_var.get():
+                sg_val -= 1
+            color = GREEN_TEXT if sg_val > 0 else RED_TEXT if sg_val < 0 else TEXT_COLOR
+            sg_label.config(text=f"Strokes Gained: {sg_val:+.2f}", bg = "#2D3E55", fg=color)
+            sg_label.sg_value = sg_val
+        except Exception as e:
+            sg_label.config(text=f"Error: {e}", fg=RED_TEXT)
+        finally:
             conn.close()
 
-            # Compute strokes gained
-            sg_value = start_avg[0] - (1 + end_avg_val)
-            if penalty_var.get():
-                sg_value -= 1
-
-            color = green_text if sg_value > 0 else red_text if sg_value < 0 else dark_text
-            sg_label.config(text=f"Strokes Gained: {sg_value:+.2f}", fg=color)
-            sg_label.sg_value = sg_value
-
-        except Exception as e:
-            sg_label.config(text=f"Error: {e}", fg=red_text)
-
-    def toggle_distance_end_state(event=None):
-        """Disable DistanceEnd when 'Hole' selected."""
+    def toggle_end_state(event=None):
         if surface_end_dd.get() == "Hole":
             distance_end_entry.delete(0, tk.END)
             distance_end_entry.config(state="disabled")
@@ -106,50 +79,63 @@ def open_shot_entry():
             distance_end_entry.config(state="normal")
 
     def add_shot():
-        """Add one shot to table + memory."""
         nonlocal last_surface, last_distance
-        try:
-            sg_value = getattr(sg_label, "sg_value", None)
-            if sg_value is None:
-                messagebox.showwarning("Warning", "Please complete shot details first.")
-                return
+        sg_val = getattr(sg_label, "sg_value", None)
+        if sg_val is None:
+            messagebox.showwarning("Warning", "Please complete shot details first.")
+            return
+        shot = {
+            "PlayerID": round_info["PlayerID"],
+            "RoundID": round_info["RoundID"],
+            "Hole": hole_num,
+            "Category": category_dd.get(),
+            "SurfaceStart": surface_start_dd.get(),
+            "DistanceStart": float(distance_start_entry.get()),
+            "SurfaceEnd": surface_end_dd.get(),
+            "DistanceEnd": None if surface_end_dd.get()=="Hole" else float(distance_end_entry.get()),
+            "ClubUsed": club_entry.get().strip(),
+            "ShotShape": shape_entry.get().strip(),
+            "Penalty": 1 if penalty_var.get() else 0,
+            "StrokesGained": sg_val
+        }
+        shots_this_hole.append(shot)
+        tree.insert("", "end", values=(
+            shot["Category"], shot["SurfaceStart"], shot["DistanceStart"],
+            shot["SurfaceEnd"], shot["DistanceEnd"] or "", shot["Penalty"], f"{sg_val:+.2f}"
+        ))
+        last_surface, last_distance = surface_end_dd.get(), distance_end_entry.get()
+        clear_fields(preserve=True)
 
-            par_value = int(par_dd.get()) if par_dd.get() else None
+    def previous_shot():
+        """Load the last shot entered for editing."""
+        nonlocal last_surface, last_distance
+        if not shots_this_hole:
+            messagebox.showinfo("No Previous Shot", "No previous shots to edit.")
+            return
 
-            shot = {
-                "PlayerID": round_info["PlayerID"],
-                "RoundID": round_info["RoundID"],
-                "Hole": hole_num,
-                "Par": par_value,
-                "HoleResult": None,
-                "Category": category_dd.get(),
-                "SurfaceStart": surface_start_dd.get(),
-                "DistanceStart": float(distance_start_entry.get()) if distance_start_entry.get() else None,
-                "SurfaceEnd": surface_end_dd.get(),
-                "DistanceEnd": None if surface_end_dd.get() == "Hole" else float(distance_end_entry.get()),
-                "ClubUsed": club_entry.get().strip(),
-                "ShotShape": shape_entry.get().strip(),
-                "Penalty": 1 if penalty_var.get() else 0,
-                "StrokesGained": sg_value
-            }
+        last_shot = shots_this_hole.pop()
+        clear_fields()
+        category_dd.set(last_shot["Category"])
+        surface_start_dd.set(last_shot["SurfaceStart"])
+        distance_start_entry.insert(0, last_shot["DistanceStart"])
+        surface_end_dd.set(last_shot["SurfaceEnd"])
+        if last_shot["SurfaceEnd"] != "Hole":
+            distance_end_entry.insert(0, last_shot["DistanceEnd"])
+        club_entry.insert(0, last_shot["ClubUsed"])
+        shape_entry.insert(0, last_shot["ShotShape"])
+        penalty_var.set(bool(last_shot["Penalty"]))
+        sg_label.config(text=f"Editing Shot | SG: {last_shot['StrokesGained']:+.2f}", fg=ACCENT)
 
-            # Cache and display
-            shots_this_hole.append(shot)
+        # remove last row from table
+        for row in tree.get_children():
+            tree.delete(row)
+        for s in shots_this_hole:
             tree.insert("", "end", values=(
-                shot["Category"], shot["SurfaceStart"], shot["DistanceStart"] or "",
-                shot["SurfaceEnd"], shot["DistanceEnd"] or "", shot["Penalty"], f"{sg_value:+.2f}"
+                s["Category"], s["SurfaceStart"], s["DistanceStart"],
+                s["SurfaceEnd"], s["DistanceEnd"] or "", s["Penalty"], f"{s['StrokesGained']:+.2f}"
             ))
 
-            # Update memory for next shot
-            last_surface = surface_end_dd.get()
-            last_distance = distance_end_entry.get()
-
-            clear_fields(preserve_last=True)
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-    def clear_fields(preserve_last=False):
-        """Reset inputs for next shot, optionally reusing previous end data."""
+    def clear_fields(preserve=False):
         category_dd.set("")
         surface_start_dd.set("")
         surface_end_dd.set("")
@@ -158,164 +144,140 @@ def open_shot_entry():
         club_entry.delete(0, tk.END)
         shape_entry.delete(0, tk.END)
         penalty_var.set(False)
-        sg_label.config(text="Strokes Gained: --", fg=dark_text)
+        sg_label.config(text="Strokes Gained: --", fg=TEXT_COLOR)
         distance_end_entry.config(state="normal")
-
-        # Auto-fill start with memory
-        if preserve_last and last_surface and last_distance:
+        if preserve and last_surface and last_distance:
             surface_start_dd.set(last_surface)
             if last_surface != "Hole":
                 distance_start_entry.insert(0, last_distance)
 
-    def determine_hole_result(par, num_shots, total_penalties):
-        strokes = num_shots + total_penalties
-        relative = strokes - par
-        if relative <= -2:
-            return "Eagle"
-        elif relative == -1:
-            return "Birdie"
-        elif relative == 0:
-            return "Par"
-        elif relative == 1:
-            return "Bogey"
-        elif relative == 2:
-            return "Double Bogey"
-        else:
-            return f"Other (+{relative})"
+    def determine_hole_result(par, num, penalties):
+        total = num + penalties
+        diff = total - par
+        return (
+            "Eagle" if diff <= -2 else
+            "Birdie" if diff == -1 else
+            "Par" if diff == 0 else
+            "Bogey" if diff == 1 else
+            "Double Bogey" if diff == 2 else
+            f"Other (+{diff})"
+        )
 
     def save_hole():
-        """Cache all shots for this hole, compute hole result."""
-        nonlocal last_surface, last_distance
         if not shots_this_hole:
             messagebox.showwarning("No Shots", "Please add at least one shot.")
             return
         if not par_dd.get():
-            messagebox.showwarning("Missing Par", "Please select a Par value for this hole.")
+            messagebox.showwarning("Missing Par", "Select par value.")
             return
-
-        par_value = int(par_dd.get())
-        total_penalties = sum(shot["Penalty"] for shot in shots_this_hole)
-        num_shots = len(shots_this_hole)
-        hole_result = determine_hole_result(par_value, num_shots, total_penalties)
-
-        hole_result_label.config(text=f"Hole Result: {hole_result}", fg=dark_text)
-
-        # Cache all shots
-        for shot in shots_this_hole:
-            shot["HoleResult"] = hole_result
-            cached_shots.append(shot)
-
+        par = int(par_dd.get())
+        total_pen = sum(s["Penalty"] for s in shots_this_hole)
+        res = determine_hole_result(par, len(shots_this_hole), total_pen)
+        for s in shots_this_hole:
+            s["HoleResult"] = res
+            cached_shots.append(s)
         shots_this_hole.clear()
-        tree.delete(*tree.get_children())  # clear table
-        last_surface = None
-        last_distance = None
-        messagebox.showinfo("Hole Saved", f"Hole {hole_num} saved as {hole_result}")
+        tree.delete(*tree.get_children())
+        messagebox.showinfo("Hole Saved", f"Hole {hole_num} saved as {res}")
         next_hole()
 
     def next_hole():
-        """Advance to next hole or finish round."""
         nonlocal hole_num, last_surface, last_distance
         if hole_num < int(round_info["HolesPlayed"]):
             hole_num += 1
             hole_label.config(text=f"Hole {hole_num}")
             par_dd.set("")
-            hole_result_label.config(text="Hole Result: --")
-            last_surface = None
-            last_distance = None
-
-            # Reset to tee
+            last_surface, last_distance = None, None
             surface_start_dd.set("Tee")
             distance_start_entry.delete(0, tk.END)
             distance_end_entry.config(state="normal")
         else:
-            messagebox.showinfo("Round Complete", "All holes recorded. Generating summary...")
+            messagebox.showinfo("Round Complete", "All holes recorded.")
             window.destroy()
             from summary_screen import open_summary_screen
             open_summary_screen(cached_shots)
 
-    # --- UI SETUP ---
+    # --- UI BUILD ---
     global window
     window = tk.Tk()
-    window.title(f"Strokes Gained - {round_info['CoursePlayed']}")
-    window.configure(bg=teal_light)
+    window.title(f"Strokes Gained - {round_info.get('CoursePlayed','Round')}")
+    window.configure(bg=BG_PRIMARY)
     window.resizable(False, False)
-    center_window(window, 1000, 750)
+    center_window(window, 1000, 850)
 
-    hole_label = tk.Label(window, text=f"Hole {hole_num}", bg=teal_light, fg=dark_bg, font=("Arial", 16, "bold"))
-    hole_label.pack(pady=10)
+    card = tk.Frame(window, bg=CARD_BG, padx=40, pady=30, highlightbackground=FIELD_BORDER, highlightthickness=1)
+    card.pack(expand=True, pady=25)
 
-    # Top bar
-    top_frame = tk.Frame(window, bg=teal_light)
-    top_frame.pack(pady=(5, 15))
+    hole_label = tk.Label(card, text=f"Hole {hole_num}", bg=CARD_BG, fg=TEXT_COLOR, font=("Segoe UI", 15, "bold"))
+    hole_label.grid(row=0, column=0, columnspan=2, pady=(0, 10))
 
-    tk.Label(top_frame, text="Par:", bg=teal_light, fg=dark_text, font=("Arial", 11, "bold")).grid(row=0, column=0, padx=5)
-    par_dd = ttk.Combobox(top_frame, values=[3, 4, 5], width=5, state="readonly")
-    par_dd.grid(row=0, column=1, padx=5)
+    tk.Label(card, text="Par:", bg=CARD_BG, fg=TEXT_COLOR, font=("Segoe UI", 11, "bold")).grid(row=1, column=0, sticky="e", pady=6, padx=(0, 10))
+    par_dd = ttk.Combobox(card, values=[3, 4, 5], width=5, state="readonly")
+    par_dd.grid(row=1, column=1, sticky="w", pady=6)
 
-    hole_result_label = tk.Label(top_frame, text="Hole Result: --", bg=teal_light, fg=dark_text, font=("Arial", 11, "bold"))
-    hole_result_label.grid(row=0, column=2, padx=15)
+    # Form fields (clean grid alignment)
+    row_labels = [
+        ("Category:", ["Driving", "Approach", "Short Game", "Putting"]),
+        ("Surface Start:", ["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty"]),
+        ("Distance Start (yds):", None),
+        ("Surface End:", ["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty", "Hole"]),
+        ("Distance End (yds):", None),
+        ("Club Used*:", None),
+        ("Shot Shape*:", None)
+    ]
+    widgets = []
+    for idx, (label, options) in enumerate(row_labels, start=2):
+        tk.Label(card, text=label, bg=CARD_BG, fg=TEXT_COLOR, font=("Segoe UI", 11, "bold")).grid(row=idx, column=0, sticky="e", pady=5, padx=(0, 10))
+        if options:
+            w = ttk.Combobox(card, values=options, width=18, state="readonly")
+        else:
+            w = tk.Entry(card, width=20, bg=ENTRY_BG, relief="flat")
+        w.grid(row=idx, column=1, sticky="w", pady=5)
+        widgets.append(w)
 
-    # Form fields
-    form = tk.Frame(window, bg=teal_light)
-    form.pack(pady=10)
-
-    tk.Label(form, text="Category:", bg=teal_light, fg=dark_text).grid(row=0, column=0, sticky="e", padx=5, pady=5)
-    category_dd = ttk.Combobox(form, values=["Driving", "Approach", "Short Game", "Putting"], width=17, state="readonly")
-    category_dd.grid(row=0, column=1, pady=5)
-
-    tk.Label(form, text="Surface Start:", bg=teal_light, fg=dark_text).grid(row=1, column=0, sticky="e", padx=5, pady=5)
-    surface_start_dd = ttk.Combobox(form, values=["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty"], width=17, state="readonly")
-    surface_start_dd.grid(row=1, column=1, pady=5)
-    surface_start_dd.set("Tee")
-
-    tk.Label(form, text="Distance Start (yds):", bg=teal_light, fg=dark_text).grid(row=2, column=0, sticky="e", padx=5, pady=5)
-    distance_start_entry = tk.Entry(form, width=20)
-    distance_start_entry.grid(row=2, column=1, pady=5)
-
-    tk.Label(form, text="Surface End:", bg=teal_light, fg=dark_text).grid(row=3, column=0, sticky="e", padx=5, pady=5)
-    surface_end_dd = ttk.Combobox(form, values=["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty", "Hole"], width=17, state="readonly")
-    surface_end_dd.grid(row=3, column=1, pady=5)
-    surface_end_dd.bind("<<ComboboxSelected>>", toggle_distance_end_state)
-
-    tk.Label(form, text="Distance End (yds):", bg=teal_light, fg=dark_text).grid(row=4, column=0, sticky="e", padx=5, pady=5)
-    distance_end_entry = tk.Entry(form, width=20)
-    distance_end_entry.grid(row=4, column=1, pady=5)
-
-    tk.Label(form, text="Club Used:", bg=teal_light, fg=dark_text).grid(row=5, column=0, sticky="e", padx=5, pady=5)
-    club_entry = tk.Entry(form, width=20)
-    club_entry.grid(row=5, column=1, pady=5)
-
-    tk.Label(form, text="Shot Shape:", bg=teal_light, fg=dark_text).grid(row=6, column=0, sticky="e", padx=5, pady=5)
-    shape_entry = tk.Entry(form, width=20)
-    shape_entry.grid(row=6, column=1, pady=5)
+    category_dd, surface_start_dd, distance_start_entry, surface_end_dd, distance_end_entry, club_entry, shape_entry = widgets
+    surface_end_dd.bind("<<ComboboxSelected>>", toggle_end_state)
 
     penalty_var = tk.BooleanVar()
-    penalty_cb = tk.Checkbutton(form, text="Penalty", bg=teal_light, fg=dark_text, variable=penalty_var, command=calculate_strokes_gained)
-    penalty_cb.grid(row=7, column=1, sticky="w", pady=5)
+    penalty_cb = tk.Checkbutton(card, text="Penalty", bg=CARD_BG, fg=TEXT_COLOR, variable=penalty_var, command=calculate_strokes_gained)
+    penalty_cb.grid(row=len(row_labels)+2, column=1, sticky="w", pady=5)
 
-    sg_label = tk.Label(window, text="Strokes Gained: --", bg=teal_light, fg=dark_text, font=("Arial", 13, "bold"))
-    sg_label.pack(pady=8)
+    sg_label = tk.Label(card, text="Strokes Gained: --", bg=CARD_BG, fg=TEXT_COLOR, font=("Segoe UI", 12, "bold"))
+    sg_label.grid(row=len(row_labels)+3, column=0, columnspan=2, pady=(10, 8))
 
-    # --- Shot table ---
-    columns = ("Category", "Start", "DistStart", "End", "DistEnd", "Penalty", "SG")
-    tree = ttk.Treeview(window, columns=columns, show="headings", height=8)
+    # Treeview
+    columns = ("Category","Start","DistStart","End","DistEnd","Penalty","SG")
+    tree = ttk.Treeview(card, columns=columns, show="headings", height=8)
+    style = ttk.Style()
+    style.theme_use("default")
+    style.configure("Treeview", background="#1E293B", fieldbackground="#1E293B",
+                    foreground=TEXT_COLOR, font=("Segoe UI", 10))
+    style.map("Treeview", background=[("selected", "#324057")])
+    style.configure("Treeview.Heading", background="#2A3A55", foreground=TEXT_COLOR,
+                    font=("Segoe UI", 10, "bold"))
     for col in columns:
         tree.heading(col, text=col)
         tree.column(col, width=120, anchor="center")
-    tree.pack(pady=10)
+    tree.tag_configure("odd", background="#1E293B")
+    tree.tag_configure("even", background="#24344C")
+    tree.grid(row=len(row_labels)+4, column=0, columnspan=2, pady=(10, 10))
 
-    scrollbar = ttk.Scrollbar(window, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
-    scrollbar.place(relx=0.97, rely=0.38, relheight=0.35)
+    # Buttons
+    def on_hover(e): e.widget.config(bg=ACCENT_HOVER)
+    def off_hover(e): e.widget.config(bg=ACCENT)
 
-    btn_frame = tk.Frame(window, bg=teal_light)
-    btn_frame.pack(pady=20)
+    btn_frame = tk.Frame(card, bg=CARD_BG)
+    btn_frame.grid(row=len(row_labels)+5, column=0, columnspan=2, pady=(20, 20))
+    for text, cmd in [("Add Shot", add_shot), ("Save Hole", save_hole), ("Previous Shot", previous_shot), ("Clear Fields", clear_fields)]:
+        b = tk.Button(btn_frame, text=text, bg=ACCENT, fg="white", font=("Segoe UI", 11, "bold"),
+                      relief="flat", bd=0, padx=18, pady=12, cursor="hand2", command=cmd)
+        b.pack(side="left", padx=10)
+        b.bind("<Enter>", on_hover)
+        b.bind("<Leave>", off_hover)
 
-    tk.Button(btn_frame, text="Add Shot", bg=dark_bg, fg=pale_sage, font=("Arial", 11, "bold"), command=add_shot).grid(row=0, column=0, padx=15)
-    tk.Button(btn_frame, text="Save Hole", bg=dark_bg, fg=pale_sage, font=("Arial", 11, "bold"), command=save_hole).grid(row=0, column=1, padx=15)
-
-    for widget in [surface_start_dd, surface_end_dd, distance_start_entry, distance_end_entry]:
-        widget.bind("<FocusOut>", lambda e: calculate_strokes_gained())
-        widget.bind("<KeyRelease>", lambda e: calculate_strokes_gained())
+    # Live SG recalculation
+    for w in [surface_start_dd, surface_end_dd, distance_start_entry, distance_end_entry]:
+        w.bind("<FocusOut>", lambda e: calculate_strokes_gained())
+        w.bind("<KeyRelease>", lambda e: calculate_strokes_gained())
 
     window.mainloop()
