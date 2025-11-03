@@ -30,8 +30,10 @@ def main():
     # Step 3: Shot entry
     from shot_entry import open_shot_entry, cached_shots
     open_shot_entry()
-
     # Step 4: After summary screen executes, cached_shots will have been saved
+    from round_summary import open_summary_screen
+    open_summary_screen(cached_shots)
+
     print("✅ App flow completed successfully.")
 
 if __name__ == "__main__":

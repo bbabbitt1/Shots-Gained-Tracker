@@ -84,27 +84,40 @@ def open_shot_entry():
         if sg_val is None:
             messagebox.showwarning("Warning", "Please complete shot details first.")
             return
+
         shot = {
             "PlayerID": round_info["PlayerID"],
             "RoundID": round_info["RoundID"],
             "Hole": hole_num,
+            "Par": int(par_dd.get()) if par_dd.get() else None,
             "Category": category_dd.get(),
             "SurfaceStart": surface_start_dd.get(),
             "DistanceStart": float(distance_start_entry.get()),
             "SurfaceEnd": surface_end_dd.get(),
-            "DistanceEnd": None if surface_end_dd.get()=="Hole" else float(distance_end_entry.get()),
+            "DistanceEnd": None if surface_end_dd.get() == "Hole" else float(distance_end_entry.get()),
             "ClubUsed": club_entry.get().strip(),
             "ShotShape": shape_entry.get().strip(),
             "Penalty": 1 if penalty_var.get() else 0,
             "StrokesGained": sg_val
         }
+
+        # Append and display
         shots_this_hole.append(shot)
         tree.insert("", "end", values=(
-            shot["Category"], shot["SurfaceStart"], shot["DistanceStart"],
-            shot["SurfaceEnd"], shot["DistanceEnd"] or "", shot["Penalty"], f"{sg_val:+.2f}"
+            shot["Category"],
+            shot["SurfaceStart"],
+            shot["DistanceStart"],
+            shot["SurfaceEnd"],
+            shot["DistanceEnd"] or "",
+            shot["Penalty"],
+            f"{sg_val:+.2f}"
         ))
+
+        # Update memory for next shot
         last_surface, last_distance = surface_end_dd.get(), distance_end_entry.get()
-        clear_fields(preserve=True)
+
+        # ✅ Fix: call with correct argument name
+        clear_fields(preserve_last=True)
 
     def previous_shot():
         """Load the last shot entered for editing."""
@@ -135,7 +148,8 @@ def open_shot_entry():
                 s["SurfaceEnd"], s["DistanceEnd"] or "", s["Penalty"], f"{s['StrokesGained']:+.2f}"
             ))
 
-    def clear_fields(preserve=False):
+    def clear_fields(preserve_last=False):
+        """Reset inputs for next shot, with smart auto-population based on previous shot."""
         category_dd.set("")
         surface_start_dd.set("")
         surface_end_dd.set("")
@@ -146,10 +160,20 @@ def open_shot_entry():
         penalty_var.set(False)
         sg_label.config(text="Strokes Gained: --", fg=TEXT_COLOR)
         distance_end_entry.config(state="normal")
-        if preserve and last_surface and last_distance:
+
+        # --- carry over last shot context if applicable ---
+        if preserve_last and last_surface and last_distance:
             surface_start_dd.set(last_surface)
             if last_surface != "Hole":
                 distance_start_entry.insert(0, last_distance)
+
+        # ✅ if last shot ended on Green → next shot category = Putting
+        if last_surface == "Green":
+            category_dd.set("Putting")
+
+        # ✅ if last shot ended on Tee (re-tee after OB) → next shot category = Driving
+        elif last_surface == "Tee":
+            category_dd.set("Driving")
 
     def determine_hole_result(par, num, penalties):
         total = num + penalties
@@ -181,6 +205,7 @@ def open_shot_entry():
         messagebox.showinfo("Hole Saved", f"Hole {hole_num} saved as {res}")
         next_hole()
 
+
     def next_hole():
         nonlocal hole_num, last_surface, last_distance
         if hole_num < int(round_info["HolesPlayed"]):
@@ -194,7 +219,7 @@ def open_shot_entry():
         else:
             messagebox.showinfo("Round Complete", "All holes recorded.")
             window.destroy()
-            from summary_screen import open_summary_screen
+            from round_summary import open_summary_screen
             open_summary_screen(cached_shots)
 
     # --- UI BUILD ---
@@ -215,11 +240,23 @@ def open_shot_entry():
     par_dd = ttk.Combobox(card, values=[3, 4, 5], width=5, state="readonly")
     par_dd.grid(row=1, column=1, sticky="w", pady=6)
 
+    # --- Auto-set Category when Par changes ---
+    def on_par_change(event=None):
+        selected_par = par_dd.get()
+        if selected_par == "3":
+            category_dd.set("Approach")
+        elif selected_par in ("4", "5"):
+            category_dd.set("Driving")
+        else:
+            category_dd.set("")  # clear if user resets or removes value
+
+    par_dd.bind("<<ComboboxSelected>>", on_par_change)
+
     # Form fields (clean grid alignment)
     row_labels = [
         ("Category:", ["Driving", "Approach", "Short Game", "Putting"]),
         ("Surface Start:", ["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty"]),
-        ("Distance Start (yds):", None),
+        ("Distance Start (yds/ft):", None),
         ("Surface End:", ["Tee", "Fairway", "Rough", "Sand", "Green", "Penalty", "Hole"]),
         ("Distance End (yds):", None),
         ("Club Used*:", None),
