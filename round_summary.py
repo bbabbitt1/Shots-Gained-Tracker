@@ -3,6 +3,7 @@ from tkinter import messagebox
 import sqlite3
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
+from round_setup import round_info
 
 # --- COLORS ---
 BG_COLOR = "#121a24"
@@ -42,7 +43,7 @@ def open_summary_screen(shots):
     fairways_hit = 0
     greens_hit = 0
     total_sg = 0
-    score_vs_par = 0
+
 
     holes = {}
     for shot in shots:
@@ -53,16 +54,17 @@ def open_summary_screen(shots):
         if not shots_list:
             continue
 
-        par = shots_list[0].get("Par", 0)
-        total_par += par
-        strokes = len(shots_list) + sum(s["Penalty"] for s in shots_list)
-        total_strokes += strokes
-        total_sg += sum(s["StrokesGained"] for s in shots_list if s["StrokesGained"] is not None)
+        if shots_list:
+            par = int(shots_list[0].get("Par", 0) or 0)
+            total_par += par
+            strokes = len(shots_list) + sum(s.get("Penalty", 0) for s in shots_list)
+            total_strokes += strokes
+            total_sg += sum(s.get("StrokesGained", 0) or 0 for s in shots_list)
 
         # --- Fairway Hit Logic ---
         first = shots_list[0]
         if first.get("Category") == "Driving" and not first.get("Penalty"):
-            if par >= 4 and first.get("SurfaceEnd") in ("Fairway", "Green"):
+            if par >= 4 and first.get("SurfaceEnd") in ("Fairway", "Green","Hole"):
                 fairways_hit += 1
 
         # --- Green in Regulation Logic ---
@@ -73,9 +75,9 @@ def open_summary_screen(shots):
 
     # --- Totals ---
     if total_strokes - total_par > 0:
-        score_vs_par = f"+{total_par}"
+        score_vs_par = f"+{total_strokes-total_par}"
     elif total_strokes - total_par < 0:
-        score_vs_par = f"-{total_par}"
+        score_vs_par = f"-{total_par-total_strokes}"
     else:
         score_vs_par = "E"
 
@@ -164,7 +166,7 @@ def open_summary_screen(shots):
             c.execute("""
                 INSERT INTO DimRound (PlayerID, CoursePlayed, RoundDate, HolesPlayed, TeePreference)
                 VALUES (?, ?, date('now'), ?, 'Tips')
-            """, (shots[0]["PlayerID"], len(holes)))
+            """, (shots[0]["PlayerID"], round_info["CoursePlayed"], len(holes)))
             round_id = c.lastrowid
 
             for s in shots:

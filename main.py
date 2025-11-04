@@ -1,9 +1,3 @@
-# main.py
-"""
-Main entry point for the Strokes Gained Golf App.
-Handles the full flow:
-1. Login → 2. Round Setup → 3. Shot Entry → 4. Summary Screen
-"""
 
 def main():
     # Step 1: Login
